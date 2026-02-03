@@ -2,3 +2,6 @@
 	path = scripts/data/validation/llm_council
 	url = https://github.com/AsyaPronina/llm-council.git
 	branch = format_chairman_response
+[submodule "scripts/circuits/circuit-tracer"]
+	path = scripts/circuits/circuit-tracer
+	url = https://github.com/safety-research/circuit-tracer.git
