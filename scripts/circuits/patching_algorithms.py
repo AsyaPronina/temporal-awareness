@@ -12,6 +12,18 @@ from transformer_lens import (
 import gc
 import os
 
+## Helper patch-setter for all position patching
+def layer_patch_setter(corrupted_activation, index, clean_activation):
+    """
+    Applies the activation patch where index = [layer]
+
+    Implicitly assumes that the activation axis order is [batch, pos, ...], which is true of everything that is not an attention pattern shaped tensor.
+    """
+    assert len(index) == 1
+    layer = index
+    corrupted_activation[:, :, ...] = clean_activation[:, :, ...]
+    return corrupted_activation
+
 def get_logit_diff(logits, clean_answer_id, corrupted_answer_id):
     if len(logits.shape) == 3:
         # Get final logits only from batch size == 1
@@ -594,7 +606,7 @@ class ActivationPatching(Patching):
         # Get the dataframe where each row is a tuple of indices
         return index_axis_max_range
 
-    def __patch__(self, layer_specific_algorithm, activation_name="", index_axis_names=""):
+    def __patch__(self, layer_specific_algorithm, activation_name="", index_axis_names="", **kvargs):
         # Precalculate caches and baselines if not yet:
         if not self.unbatched:
             self.__precalculate_caches_and_baselines__()
@@ -797,7 +809,8 @@ class ActivationPatching(Patching):
                 # index_df contains rows that corresponds to multi-level indices
 
                 ___, index_df = layer_specific_algorithm(self.model, self.corrupted_tokens, self.clean_cache,
-                                                         __metrics__, return_index_df=True)
+                                                         __metrics__, return_index_df=True,
+                                                         index_axis_names=index_axis_names, **kvargs)
 
                 assert len(metrics_output) > 0, "More than one layer were processed!"
                 first_layer_metrics = metrics_output[0]
@@ -864,7 +877,8 @@ class ActivationPatching(Patching):
                     gc.collect()
 
                     ___, index_df = layer_specific_algorithm(self.model, self.corrupted_tokens[i], clean_cache,
-                                                             __metrics_unbatched__, return_index_df=True)
+                                                             __metrics_unbatched__, return_index_df=True,
+                                                             index_axis_names=index_axis_names, **kvargs)
 
                     assert len(metrics_output) > 0, "More than one layer were processed!"
                     if self.dump:
@@ -908,7 +922,8 @@ class ActivationPatching(Patching):
                     return torch.Tensor([logit_diff])
 
                 ___, index_df = layer_specific_algorithm(self.model, self.clean_tokens, self.corrupted_cache,
-                                                         __metrics__, return_index_df=True)
+                                                         __metrics__, return_index_df=True,
+                                                         index_axis_names=index_axis_names, **kvargs)
 
                 assert len(metrics_output) > 0, "More than one layer were processed!"
                 first_layer_metrics = metrics_output[0]
@@ -976,7 +991,8 @@ class ActivationPatching(Patching):
                     gc.collect()
 
                     ___, index_df = layer_specific_algorithm(self.model, self.clean_tokens[i], corrupted_cache,
-                                                             __metrics_unbatched__, return_index_df=True)
+                                                             __metrics_unbatched__, return_index_df=True,
+                                                             index_axis_names=index_axis_names, **kvargs)
 
                     assert len(metrics_output) > 0, "More than one layer were processed!"
                     if self.dump:
@@ -1027,6 +1043,33 @@ class ActivationPatching(Patching):
         return self.__patch__(patching.get_act_patch_mlp_out,
                               activation_name="mlp_out",
                               index_axis_names=("layer", "pos"))
+
+    def patch_residual_all_tokens(self):
+        return self.__patch__(patching.get_act_patch_resid_pre,
+                              activation_name="resid_pre",
+                              index_axis_names=("layer",),
+                              patch_setter=layer_patch_setter)
+
+    def patch_residual_mid_all_tokens(self):
+        return self.__patch__(patching.get_act_patch_resid_mid,
+                              activation_name="resid_mid",
+                              index_axis_names=("layer",),
+                              patch_setter=layer_patch_setter)
+
+    def patch_layer_out_all_tokens(self):
+        raise NotImplementedError()
+
+    def patch_attn_out_all_tokens(self):
+        return self.__patch__(patching.get_act_patch_attn_out,
+                              activation_name="attn_out",
+                              index_axis_names=("layer",),                              
+                              patch_setter=layer_patch_setter)
+
+    def patch_mlp_out_all_tokens(self):
+        return self.__patch__(patching.get_act_patch_mlp_out,
+                              activation_name="mlp_out",
+                              index_axis_names=("layer",),                              
+                              patch_setter=layer_patch_setter)
 
 
 class AttributionPatching(Patching):
